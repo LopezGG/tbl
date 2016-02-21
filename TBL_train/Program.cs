@@ -19,42 +19,40 @@ namespace TBL_train
             clock.Start();
             int docId = 0;
             Dictionary<int,Document> TrainingDocs = new Dictionary<int,Document>();
-            Dictionary<string, List<int>> classDocId = new Dictionary<string,List<int>>();
+            Dictionary<string, List<int>> FeatureDocId = new Dictionary<string,List<int>>();
             List<String> Vocab = new List<String>();
             List<String> UniqueClass = new List<String>();
 
 
             //read training Docs and create Vocab , list of trainingDocs and list of unique classes
-            ReadTraining (ref TrainingDocs, ref Vocab,ref UniqueClass,TrainData, ref docId,ref classDocId);
+            ReadTraining (ref TrainingDocs, ref Vocab,ref UniqueClass,TrainData, ref docId,ref FeatureDocId);
             //training starts here
             List<Transformation> TransformationList = new List<Transformation>();
-            Console.WriteLine("timeElapsed: " + clock.Elapsed);
             while(true)
             {
-                Transformation curTransformation = GetBestTransformation ( Vocab, UniqueClass, TrainingDocs,classDocId);
-                Console.WriteLine("timeElapsed: " + clock.Elapsed+" gain: " + curTransformation.netGain);
+                Transformation curTransformation = GetBestTransformation ( Vocab, UniqueClass, TrainingDocs,FeatureDocId);
+                
                 if(curTransformation==null)
                 {
-                    Console.WriteLine("no Candidates");
+                    //Console.WriteLine("no Candidates");
                     break;
                 }
                 if ((curTransformation.netGain) >= MinGain)
                 {
                     
                     List<int> DocIdToUpdate;
-                    if (classDocId.ContainsKey(curTransformation.FromClass))
-                        DocIdToUpdate = classDocId[curTransformation.FromClass].ToList();
+                    if (FeatureDocId.ContainsKey(curTransformation.TriggerFeature) && FeatureDocId[curTransformation.TriggerFeature].Count >0)
+                        DocIdToUpdate = FeatureDocId[curTransformation.TriggerFeature].ToList();
+                        //we must never enter else part here. because if there is gain then feature mustbe present
                     else
                         break;
                     //we will go ahead and do this transformation so we update the existing correct instances score, add to list of transformations and change the curClass of doc.
                     TransformationList.Add(curTransformation);
                     foreach (var dId in DocIdToUpdate)
                     {
-                        if (TrainingDocs[dId].FeatureDict.ContainsKey(curTransformation.TriggerFeature) && TrainingDocs[dId].curClass == curTransformation.FromClass)
+                        if (TrainingDocs[dId].curClass == curTransformation.FromClass)
                         {
                             TrainingDocs[dId].curClass = curTransformation.ToClass;
-                            classDocId[curTransformation.FromClass].Remove(dId);
-                            classDocId[curTransformation.ToClass].Add(dId);
                         }
                         
                     }
@@ -63,12 +61,17 @@ namespace TBL_train
                 else
                     break;
             }
-            int correctClass = 0;
+            Dictionary<string, int> ConfusionDict = new Dictionary<string, int>();
+            string key="";
             foreach (var doc in TrainingDocs)
             {
-                if(doc.Value.curClass == doc.Value.correctClass)
-                    correctClass++;
+                key=doc.Value.correctClass+"_"+doc.Value.curClass;
+                if (ConfusionDict.ContainsKey(key))
+                    ConfusionDict[key]++;
+                else
+                    ConfusionDict.Add(key, 1);
             }
+            WriteConfusionMatrix (UniqueClass, ConfusionDict, "train", docId);
             using(StreamWriter Sw = new StreamWriter(ModelFile))
             {
                 foreach (var trans in TransformationList)
@@ -76,17 +79,46 @@ namespace TBL_train
                     Sw.WriteLine(trans.TriggerFeature + " " + trans.FromClass + " " + trans.ToClass + " " + trans.netGain);
                 }
             }
-    
-
-
             clock.Stop();
-            Console.WriteLine("Accuracy : " + Convert.ToString(correctClass/((double)docId)));
             Console.WriteLine("Time Elapsed: {0} ", clock.Elapsed);
             Console.ReadLine();
 
         }
+        public static void WriteConfusionMatrix (List<String> ClassBreakDown, Dictionary<String, int> ConfusionDict, string testOrTrain, int totalInstances)
+        {
+            int correctPred = 0;
+            Console.WriteLine("Confusion matrix for the " + testOrTrain + " data:\n row is the truth, column is the system output");
+            Console.Write("\t\t\t");
+            foreach (var actClass in ClassBreakDown)
+            {
+                Console.Write(actClass + "\t");
+            }
+            Console.WriteLine();
+            foreach (var actClass in ClassBreakDown)
+            {
 
-        public static Transformation GetBestTransformation (List<String> Vocab, List<String> UniqueClass, Dictionary<int, Document> TrainingDocs, Dictionary<string, List<int>> classDocId)
+                Console.Write(actClass + "\t");
+                foreach (var predClass in ClassBreakDown)
+                {
+
+                    if (ConfusionDict.ContainsKey(actClass + "_" + predClass))
+                    {
+                        Console.Write(ConfusionDict[actClass + "_" + predClass] + "\t");
+                        if (actClass == predClass)
+                            correctPred += ConfusionDict[actClass + "_" + predClass];
+                    }
+                    else
+                        Console.Write("0" + "\t");
+
+                }
+                Console.WriteLine();
+            }
+            Console.WriteLine(testOrTrain + " accuracy=" + Convert.ToString(correctPred / ( double )totalInstances));
+            Console.WriteLine();
+
+
+        }
+        public static Transformation GetBestTransformation (List<String> Vocab, List<String> UniqueClass, Dictionary<int, Document> TrainingDocs, Dictionary<string, List<int>> FeatureDocId)
         {
             
             if (Vocab.Count == 0 || UniqueClass.Count == 0 || TrainingDocs.Count == 0)
@@ -95,13 +127,14 @@ namespace TBL_train
             int score;
             foreach (var feature in Vocab)
             {
+                List<int> requiredDocs;
+                if (FeatureDocId.ContainsKey(feature) && FeatureDocId[feature].Count > 0)
+                    requiredDocs = FeatureDocId[feature];
+                else
+                    continue;
                 foreach (var fromClass in UniqueClass)
                 {
-                    List<int> requiredDocs;
-                    if (classDocId.ContainsKey(fromClass) && classDocId[fromClass].Count > 0)
-                        requiredDocs = classDocId[fromClass];
-                    else
-                        continue;
+
                     foreach (var toClass in UniqueClass)
                     {
                         //this basically means  no change
@@ -137,7 +170,7 @@ namespace TBL_train
                 return null;
         }
 
-        public static void ReadTraining (ref Dictionary<int, Document> TrainingDocs, ref List<String> Vocab,ref List<String> UniqueClass, string TrainData, ref int docId,ref Dictionary<string, List<int>> classDocId)
+        public static void ReadTraining (ref Dictionary<int, Document> TrainingDocs, ref List<String> Vocab,ref List<String> UniqueClass, string TrainData, ref int docId,ref Dictionary<string, List<int>> FeatureDocId)
         {
             string line, word,firstClass="";
             bool flag = true;
@@ -151,7 +184,6 @@ namespace TBL_train
                     if (flag)
                     {
                         firstClass = words[0];
-                        classDocId.Add(firstClass, new List<int>());
                         flag = false;
                     }
                     Document temp = new Document(words[0], firstClass);
@@ -159,22 +191,18 @@ namespace TBL_train
                     for (int i = 1; i < words.Length; i++)
                     {
                         word = words[i].Substring(0, words[i].IndexOf(":"));
-                        Vocab.Add(word);
+                        if (FeatureDocId.ContainsKey(word))
+                            FeatureDocId[word].Add(docId);
+                        else
+                            FeatureDocId.Add(word, new List<int>() { docId });
                         if (!temp.FeatureDict.ContainsKey(word))
                             temp.FeatureDict.Add(word, true);
                     }
-                    classDocId[firstClass].Add(docId);
                     TrainingDocs.Add(docId,temp);
                     docId++;
                 }
-                Vocab = Vocab.Distinct().ToList();
+                Vocab = FeatureDocId.Keys.ToList();
                 UniqueClass = UniqueClass.Distinct().ToList();
-
-                foreach (var cl in UniqueClass)
-                {
-                    if (!classDocId.ContainsKey(cl))
-                        classDocId.Add(cl, new List<int>());
-                }
             }
         }
     }
