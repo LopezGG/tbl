@@ -156,6 +156,9 @@ namespace TBL_train
                                 //I already have the correctClass which is not equal to toClass. So changing to toClass will reduce my score
                                 else if (doc.curClass == doc.correctClass)
                                     score--;
+                                    //uncomment the last two lines if you dont want it to be like paper
+                                //else if (doc.correctClass != toClass)
+                                    //score--;
                             }
                             //else I do nothing. this means I willneither gain nor loose 
                         }
